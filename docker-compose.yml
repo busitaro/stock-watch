@@ -1,0 +1,11 @@
+version: "3.8"
+services:
+  python:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile
+    volumes:
+      - ./stock-watch:/app
+      - ./config:/config
+    command: tail -f /dev/null
+    container_name: stock-watch-python

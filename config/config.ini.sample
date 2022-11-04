@@ -1,0 +1,3 @@
+[DEFAULT]
+user_id = destination_user_id
+channel_access_token = your_client_secret
