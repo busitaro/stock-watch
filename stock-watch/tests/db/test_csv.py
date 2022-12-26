@@ -47,6 +47,13 @@ def object_by_bad_price(make_object_func):
     )
 
 
+@pytest.fixture
+def object_by_only_numeric(make_object_func):
+    return make_object_func(
+        '{}/{}'.format(path.dirname(__file__), 'test_only_numeric.csv')
+    )
+
+
 def test_get_descriptions(object_by_normal_file):
     """
     正常に銘柄コードのリストが取得できること
@@ -64,6 +71,16 @@ def test_get_descriptions_from_duplicate_file(object_by_duplicate_description):
     """
     result = object_by_duplicate_description.get_descriptions()
     assert result == [8267, 1333, 12345]
+
+
+def test_get_descriptions_from_only_numeric_file(object_by_only_numeric):
+    """
+    数値のみのCSVファイル（エラー行の全くないファイル）から
+    正常に銘柄コードのリストが取得できること
+
+    """
+    result = object_by_only_numeric.get_descriptions()
+    assert result == [12345, 8267, 1333]
 
 
 def test_get_judge_func_trigger_over(object_by_normal_file):
@@ -149,6 +166,21 @@ def test_get_judge_func_exception_by_invalid_price(object_by_bad_price):
     assert str(ex.value) == message
 
 
+def test_get_judge_func_by_only_numeric_file(object_by_only_numeric):
+    """
+    数値のみのCSVファイル（エラー行の全くないファイル）を元にした
+    トリガー条件判定メソッドが返却されること
+
+    """
+    result_func = object_by_only_numeric.get_judge_func(12345)
+    test_param1 = 133
+    test_param2 = 134
+    test_param3 = 135
+    assert result_func(test_param1) is False
+    assert result_func(test_param2) is True
+    assert result_func(test_param3) is True
+
+
 def test_make_alert_message_trigger_over(object_by_normal_file):
     """
     正常にお知らせメッセージが作成されること
@@ -226,6 +258,19 @@ def test_make_alert_message_exception_by_invalid_price(object_by_bad_price):
 
     message = 'DBデータが不正です。 銘柄コード: 7452'
     assert str(ex.value) == message
+
+
+def test_make_alert_message_by_only_numeric_file(object_by_only_numeric):
+    """
+    数値のみのCSVファイル（エラー行の全くないファイル）を元にして、
+    正常にアラートメッセージが取得できること
+
+    """
+    result = object_by_only_numeric.make_alert_message(8267)
+
+    message = '銘柄コード: 8267 が 価格: 2,700.0 円を下回りました。'
+    assert result == message
+
 
 
 def test_make_fail_message(object_by_normal_file):
