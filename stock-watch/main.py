@@ -19,6 +19,7 @@ from di import LoggerDiModule
 class Main:
     end_message = '株価チェックが完了しました'
     fail_get_descriptions = 'DBからの対象銘柄取得に失敗しました'
+    no_alert_description_message = '通知対象銘柄はありませんでした'
 
     @inject
     def __init__(self, db: IDb, price: IPrice, alert: IAlert, logger: ILogger):
@@ -29,24 +30,28 @@ class Main:
 
     def execute(self):
         try:
-            # 対象銘柄を取得
-            descriptions = self.__db.get_descriptions()
+            # 対象銘柄グループを取得
+            description_groups = self.__db.get_description_groups()
         except DbException:
             self.send_message(self.fail_get_descriptions)
             exit()
 
         # 株価を取得
-        for description in descriptions:
-            try:
-                price = self.__price.get_data(description)
-            except PriceException:
-                self.fail(description)
-                continue
+        for description_group in description_groups:
+            alert_target_descriptions = []
+            for description in description_group:
+                try:
+                    price = self.__price.get_data(description)
+                except PriceException:
+                    self.fail(description)
+                    continue
 
-            # 条件を満たせばアラート
-            judge_func = self.__db.get_judge_func(description)
-            if judge_func(price):
-                self.alert(description)
+                # 条件を満たした場合アラート対象とする
+                judge_func = self.__db.get_judge_func(description)
+                if judge_func(price):
+                    alert_target_descriptions.append(description)
+            # アラートの送信
+            self.alert(alert_target_descriptions)
 
         # 終了メッセージの出力
         self.send_message(self.end_message)
@@ -57,11 +62,14 @@ class Main:
         except AlertException as ex:
             self.__logger.exception(ex)
 
-    def alert(self, description: int):
+    def alert(self, descriptions: list):
+        messages = \
+            [self.__db.make_alert_message(code) for code in descriptions]
+        message = '\n'.join(messages)
+        if not message:
+            message = self.no_alert_description_message
         try:
-            self.__alert.send_message(
-                self.__db.make_alert_message(description)
-            )
+            self.__alert.send_message(message)
         except AlertException as ex:
             self.__logger.exception(ex)
 
