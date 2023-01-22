@@ -19,6 +19,20 @@ class IDb(metaclass=ABCMeta):
         pass
 
     @abstractmethod
+    def get_description_groups(self) -> List[List[int]]:
+        """
+        監視対象の銘柄コードについて、
+        グループ毎のリストで取得する
+
+        Returns
+        -------
+        0: List[List[int]]
+            銘柄グループのリスト
+            各銘柄グループは銘柄コードのリストを持つ
+        """
+        pass
+
+    @abstractmethod
     def get_judge_func(self, description: int) -> Callable[[Decimal], bool]:
         """
         与えられた銘柄について、

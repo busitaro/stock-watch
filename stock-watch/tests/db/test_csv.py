@@ -83,6 +83,34 @@ def test_get_descriptions_from_only_numeric_file(object_by_only_numeric):
     assert result == [12345, 8267, 1333]
 
 
+def test_get_description(object_by_normal_file, mocker):
+    """
+    正常に銘柄コードグループのリストが取得できること
+
+    """
+    # mock
+    descriptions = [136, 639, 543254, 453]
+    triggers = ['under', 'over', 'over', 'under']
+    mocker.patch.object(
+        object_by_normal_file,
+        'get_descriptions',
+        return_value=descriptions
+    )
+    mock__get_price_triger_from_db = \
+        mocker.patch.object(
+            object_by_normal_file,
+            '_CsvAsDb__get_price_trigger_from_db'
+        )
+    mock__get_price_triger_from_db.side_effect = \
+        lambda description: (0, triggers[descriptions.index(description)])
+
+    # exec
+    result = object_by_normal_file.get_description_groups()
+
+    # confirm
+    assert result == [[639, 543254], [136, 453]]
+
+
 def test_get_judge_func_trigger_over(object_by_normal_file):
     """
     正常にトリガー条件判定メソッドが返却されること

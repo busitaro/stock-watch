@@ -3,6 +3,7 @@ from typing import Callable
 
 import pytest
 from injector import Module
+from injector import Injector
 
 import main
 from db import IDb
@@ -43,7 +44,6 @@ class TestDiModule(Module):
 
 class TestDbDiModule(TestDiModule):
     __test__ = False
-    mock_path = 'main.DbDiModule'
 
     def __init__(self):
         super().__init__(IDb, MockDb)
@@ -51,7 +51,6 @@ class TestDbDiModule(TestDiModule):
 
 class TestPriceDiModule(TestDiModule):
     __test__ = False
-    mock_path = 'main.PriceDiModule'
 
     def __init__(self):
         super().__init__(IPrice, MockPrice)
@@ -59,7 +58,6 @@ class TestPriceDiModule(TestDiModule):
 
 class TestAlertDiModule(TestDiModule):
     __test__ = False
-    mock_path = 'main.AlertDiModule'
 
     def __init__(self):
         super().__init__(IAlert, MockAlert)
@@ -67,193 +65,277 @@ class TestAlertDiModule(TestDiModule):
 
 class TestLoggerDiModule(TestDiModule):
     __test__ = False
-    mock_path = 'main.LoggerDiModule'
 
     def __init__(self):
         super().__init__(ILogger, MockLogger)
 
 
-def test_main_normal(mocker):
+def get_description_groups(test_descriptions: dict) -> list:
+    """
+    テスト用関数
+    test_descriptionsから、銘柄グループを取得する
+    """
+    description_groups_dict = {}
+    for code, config in test_descriptions.items():
+        group = config['group']
+        if group in description_groups_dict:
+            description_groups_dict[group].append(code)
+        else:
+            description_groups_dict[group] = [code]
+    return list(description_groups_dict.values())
+
+
+def get_alert_description_groups(test_descriptions: dict) -> list:
+    """
+    テスト用関数
+    test_descriptionsから、アラート対象の銘柄コードをグループ毎に取得する
+    """
+    groups = []
+    for config in test_descriptions.values():
+        group = config['group']
+        if group not in groups:
+            groups.append(group)
+    description_group_dict = \
+        dict(zip(
+            groups,
+            [[] for _ in range(len(groups))]
+        ))
+    for code, config in test_descriptions.items():
+        group = config['group']
+        if config['alert_target']:
+            description_group_dict[group].append(code)
+    return list(description_group_dict.values())
+
+
+def get_main_object():
+    injector = \
+        Injector([
+            TestDbDiModule(),
+            TestPriceDiModule(),
+            TestAlertDiModule(),
+            TestLoggerDiModule()
+        ])
+    return injector.get(main.Main)
+
+
+def test_execute_normal(mocker):
     """
     以下の3点が正常終了した場合のテスト
-    1. DBからの対象銘柄コード取得
+    1. DBから対象銘柄コードグループの取得
     2. すべての銘柄コードの価格取得
     3. 通知メッセージ送信
 
     以下の結果を期待する
-    1. DBからの銘柄取得メソッドが呼ばれること
+    1. DBからの対象銘柄コードグループ取得メソッドが一度だけ呼ばれること
     2. 対象銘柄の数の回数だけ、価格取得メソッドが呼ばれること
-       またその引数が銘柄コードであること
+       またその引数がDBから取得した銘柄コードグループの銘柄コードであること
     3. 対象銘柄の数の回数だけ、トリガー条件判定メソッド取得メソッドが呼ばれること
-       その引数が銘柄コードであること
-       またトリガー条件判定メソッドの引数が価格取得メソッドで取得した価格であること
-    4. 通知条件に合致した銘柄について、通知メッセージ作成メソッドが呼ばれること
-    5. 通知条件に合致した銘柄について、メッセージ通知メソッドが呼ばれ、
-       パラメータとして通知メッセージ作成メソッドの戻り値が設定されていること
-    6. 処理完了時に、メッセージ通知メソッドが呼ばれ、
+       その引数がDBから取得した銘柄コードグループの銘柄コードであること
+       またトリガー条件判定メソッドに渡される引数が価格取得メソッドで取得した価格であること
+    4. 各銘柄コードグループ毎に、アラートメソッドが呼ばれること
+       またその引数が、トリガー条件判定メソッドにてTrueが返された銘柄のリストであること
+       (Trueの銘柄が一つもない場合には、引数は空のリスト)
+    5. 処理完了時に、メッセージ通知メソッドが呼ばれ、
        パラメータとして終了メッセージが設定されていること
+    6. 価格取得失敗メッセージ通知メソッドが一度も呼ばれないこと
     """
-    # 銘柄コード
-    descriptions = [12345, 56789, 24680, 13579]
-    alert_target = [False, True, True, False]
-    prices = [Decimal(8394), Decimal(43093), Decimal(12), Decimal(43)]
-    alert_target_descriptions = []
-    for idx, description in enumerate(descriptions):
-        if alert_target[idx]:
-            alert_target_descriptions.append(description)
+    test_groups = ['gr0', 'gr1', 'gr2']
+    test_descriptions = {
+        12345: {
+            'alert_target': False,
+            'price': Decimal(8394),
+            'group': test_groups[0],
+        },
+        56789: {
+            'alert_target': True,
+            'price': Decimal(43093),
+            'group': test_groups[2],
+        },
+        24680: {
+            'alert_target': True,
+            'price': Decimal(12),
+            'group': test_groups[0],
+        },
+        13579: {
+            'alert_target': False,
+            'price': Decimal(43),
+            'group': test_groups[1],
+        },
+        87954: {
+            'alert_target': True,
+            'price': Decimal(987),
+            'group': test_groups[0],
+        },
+    }
+    # 銘柄グループ
+    description_groups = get_description_groups(test_descriptions)
+    # アラート対象の銘柄コード
+    alert_description_groups = get_alert_description_groups(test_descriptions)
+    """
+    mock Main
+    """
+    main_send_message = mocker.patch('main.Main.send_message')
+    main_alert = mocker.patch('main.Main.alert')
+    main_fail = mocker.patch('main.Main.fail')
 
     """
-    mock
+    mock IDb
     """
-    # IDb
     db_mock = mocker.Mock(spec=IDb)
+    # IDb.get_description_groups
+    idb_get_description_groups = \
+        mocker.patch.object(
+            db_mock,
+            'get_description_groups',
+            return_value=description_groups
+        )
 
+    # IDb.get_judge_func
     def get_judge_func(description: int) -> Callable[[Decimal], bool]:
         """
-        パラメータdescriptionsに対応した
-        発火有無判定メソッドを返す
-
-        発火判定はalert_targetの内容に従って実施
-        また発火有無判定メソッド内にて、
-        パラメータのチェックを実施する
+        引数のチェックとalert_targetの値を返す
         """
-        if description in descriptions:
-            idx = descriptions.index(description)
-            judge = alert_target[idx]
-            price = prices[idx]
+
+        if description in test_descriptions:
+            config = test_descriptions[description]
 
             def func(param_price: Decimal) -> bool:
-                if param_price != price:
-                    # 与えられた引数が、想定通り価格となっているか確認
+                if param_price != config['price']:
+                    # judge_funcに与えられた引数の確認
                     raise ValueError('unexpected param_price is received')
-                return judge
+                return config['alert_target']
             return func
         else:
             raise ValueError('Parameter description is invalid')
-    idb_get_descriptions = \
-        mocker.patch.object(
-            db_mock,
-            'get_descriptions',
-            return_value=descriptions
-        )
+
     idb_get_judge_func = mocker.patch.object(db_mock, 'get_judge_func')
     idb_get_judge_func.side_effect = get_judge_func
-    idb_make_alert_message = mocker.patch.object(db_mock, 'make_alert_message')
-    idb_make_alert_message.side_effect = lambda x: 'alert {}'.format(x)
-    idb_make_fail_message = mocker.patch.object(db_mock, 'make_fail_message')
+
+    # patch
     mocker.patch(MockDb.mock_path, new=db_mock)
 
-    # IPrice
+    """
+    mock IPrice
+    """
     price_mock = mocker.Mock(spec=IPrice)
 
-    def get_data(description: int) -> Decimal:
-        if description in descriptions:
-            return prices[descriptions.index(description)]
-        else:
-            raise ValueError('Parameter description is invalid')
+    # IPrice.get_data
     iprice_get_data = \
         mocker.patch.object(price_mock, 'get_data', return_value=1111)
-    iprice_get_data.side_effect = get_data
+    iprice_get_data.side_effect = \
+        lambda description: test_descriptions[description]['price']
+
+    # patch
     mocker.patch(MockPrice.mock_path, new=price_mock)
 
-    # IAlert
+    """
+    mock IAlert
+    """
     alert_mock = mocker.Mock(spec=IAlert)
-    ialert_send_message = mocker.patch.object(alert_mock, 'send_message')
+    # patch
     mocker.patch(MockAlert.mock_path, new=alert_mock)
 
-    # ILogger
+    """
+    mock ILogger
+    """
     logger_mock = mocker.Mock(spec=ILogger)
+    # patch
     mocker.patch(MockLogger.mock_path, new=logger_mock)
 
-    # mockのDi設定
-    mocker.patch(TestDbDiModule.mock_path, new=TestDbDiModule)
-    mocker.patch(TestPriceDiModule.mock_path, new=TestPriceDiModule)
-    mocker.patch(TestAlertDiModule.mock_path, new=TestAlertDiModule)
-    mocker.patch(TestLoggerDiModule.mock_path, new=TestLoggerDiModule)
-
+    """
+    mock di
+    """
     """
     exec
     """
-    main.execute()
+    main_object = get_main_object()
+    main_object.execute()
 
     """
     confirm
     """
-    params_descriptions = [
-        mocker.call(description) for description in descriptions
-    ]
-    params_alert_descriptions = [
-        mocker.call(description) for description in alert_target_descriptions
-    ]
-    alert_messages = [
-        mocker.call(
-            'alert {}'.format(description)
-        ) for description in alert_target_descriptions
-    ]
-    # IDb
-    assert idb_get_descriptions.call_count == 1
-    assert idb_get_judge_func.call_count == len(descriptions)
-    idb_get_judge_func.assert_has_calls(params_descriptions)
-    alert_count = len(list(filter(lambda x: x, alert_target)))
-    assert idb_make_alert_message.call_count == alert_count
-    idb_make_alert_message.assert_has_calls(params_alert_descriptions)
-    assert idb_make_fail_message.call_count == 0
-
-    # IPrice
-    assert iprice_get_data.call_count == len(descriptions)
+    # 1. DBからの対象銘柄コードグループ取得メソッドが一度だけ呼ばれること
+    assert idb_get_description_groups.call_count == 1
+    # 2. 対象銘柄の数の回数だけ、価格取得メソッドが呼ばれること
+    #    またその引数がDBから取得した銘柄コードグループの銘柄コードであること
+    params_descriptions = []
+    for description_group in description_groups:
+        for code in description_group:
+            params_descriptions.append(mocker.call(code))
+    assert iprice_get_data.call_count == len(test_descriptions)
     iprice_get_data.assert_has_calls(params_descriptions)
-
-    # IAlert
-    assert ialert_send_message.call_count == 3
-    ialert_send_message.assert_has_calls(
-        alert_messages + [mocker.call(main.Main.end_message)]
-    )
+    # 3. 対象銘柄の数の回数だけ、トリガー条件判定メソッド取得メソッドが呼ばれること
+    #    その引数がDBから取得した銘柄コードグループの銘柄コードであること
+    #    またトリガー条件判定メソッドに渡される引数が価格取得メソッドで取得した価格であること
+    assert idb_get_judge_func.call_count == len(test_descriptions)
+    idb_get_judge_func.assert_has_calls(params_descriptions)
+    # 4. 各銘柄コードグループ毎に、アラートメソッドが呼ばれること
+    #    またその引数が、トリガー条件判定メソッドにてTrueが返された銘柄のリストであること
+    #    (Trueの銘柄が一つもない場合には、引数は空のリスト)
+    params_alert_description_groups = \
+        [mocker.call(group) for group in alert_description_groups]
+    assert main_alert.call_count == len(test_groups)
+    main_alert.assert_has_calls(params_alert_description_groups)
+    # 5. 処理完了時に、メッセージ通知メソッドが呼ばれ、
+    #    パラメータとして終了メッセージが設定されていること
+    assert main_send_message.call_count == 1
+    main_send_message.assert_has_calls([mocker.call(main.Main.end_message)])
+    # 6. 価格取得失敗メッセージ通知メソッドが一度も呼ばれないこと
+    assert main_fail.call_count == 0
 
 
 def test_fail_get_descriptions(mocker):
     """
-    DBからの対象銘柄取得処理で例外が発生した場合、
+    DBからの対象銘柄グループ取得処理で例外が発生した場合、
     その旨のメッセージが送出され、終了すること
     """
     """
-    mock
+    mock Main
     """
-    # IDb
+    main_send_message = mocker.patch('main.Main.send_message')
+    mocker.patch('main.Main.alert')
+    mocker.patch('main.Main.fail')
+
+    """
+    mock IDb
+    """
     db_mock = mocker.Mock(spec=IDb)
-    idb_get_descriptions = mocker.patch.object(db_mock, 'get_descriptions')
-    idb_get_descriptions.side_effect = DbException()
+    # IDb.get_description_groups
+    idb_get_description_groups = \
+        mocker.patch.object(db_mock, 'get_description_groups')
+    idb_get_description_groups.side_effect = DbException()
     mocker.patch(MockDb.mock_path, new=db_mock)
 
-    # IPrice
+    """
+    mock IPrice
+    """
     price_mock = mocker.Mock(spec=IPrice)
     mocker.patch(MockPrice.mock_path, new=price_mock)
 
-    # IAlert
+    """
+    mock IAlert
+    """
     alert_mock = mocker.Mock(spec=IAlert)
-    ialert_send_message = mocker.patch.object(alert_mock, 'send_message')
     mocker.patch(MockAlert.mock_path, new=alert_mock)
 
-    # ILogger
+    """
+    mock ILogger
+    """
     logger_mock = mocker.Mock(spec=ILogger)
     mocker.patch(MockLogger.mock_path, new=logger_mock)
-
-    # mockのDi設定
-    mocker.patch(TestDbDiModule.mock_path, new=TestDbDiModule)
-    mocker.patch(TestPriceDiModule.mock_path, new=TestPriceDiModule)
-    mocker.patch(TestAlertDiModule.mock_path, new=TestAlertDiModule)
-    mocker.patch(TestLoggerDiModule.mock_path, new=TestLoggerDiModule)
 
     """
     exec
     """
+    main_object = get_main_object()
     with pytest.raises(SystemExit):
-        main.execute()
+        main_object.execute()
 
     """
     confirm
     """
-    assert ialert_send_message.call_count == 1
-    ialert_send_message.assert_has_calls(
+    assert idb_get_description_groups.call_count == 1
+    main_send_message.assert_has_calls(
         [mocker.call(main.Main.fail_get_descriptions)]
     )
 
@@ -267,69 +349,135 @@ def test_fail_get_data_some_descriptions(mocker):
     """
     mock
     """
-    descriptions = [12345, 56789, 24680, 13579]
+    description_groups = [
+        [12345, 56789],
+        [24680],
+        [13579, 45678, 67890],
+    ]
 
-    # IDb
+    """
+    mock Main
+    """
+    main_send_message = mocker.patch('main.Main.send_message')
+    main_alert = mocker.patch('main.Main.alert')
+    main_fail = mocker.patch('main.Main.fail')
+
+    """
+    mock IDb
+    """
     db_mock = mocker.Mock(spec=IDb)
-    mocker.patch.object(db_mock, 'get_descriptions', return_value=descriptions)
+    mocker.patch.object(
+        db_mock,
+        'get_description_groups',
+        return_value=description_groups
+    )
     mocker.patch.object(db_mock, 'get_judge_func', return_value=lambda x: True)
-    idb_make_alert_message = mocker.patch.object(db_mock, 'make_alert_message')
-    idb_make_alert_message.side_effect = lambda x: 'alert {}'.format(x)
-    idb_make_fail_message = mocker.patch.object(db_mock, 'make_fail_message')
-    idb_make_fail_message.side_effect = lambda x: 'fail {}'.format(x)
     mocker.patch(MockDb.mock_path, new=db_mock)
 
-    # IPrice
+    """
+    mock IPrice
+    """
     price_mock = mocker.Mock(spec=IPrice)
 
     def get_data(description: int) -> Decimal:
-        if description in [56789, 24680]:
-            return Decimal(1111)
-        else:
+        """
+        銘柄コード 56789, 24680, 13579 で例外を発生させる
+        """
+        if description in [56789, 24680, 13579]:
             raise PriceException()
+        else:
+            return Decimal(1111)
     mocker.patch.object(price_mock, 'get_data').side_effect = get_data
     mocker.patch(MockPrice.mock_path, new=price_mock)
 
-    # IAlert
+    """
+    mock IAlert
+    """
     alert_mock = mocker.Mock(spec=IAlert)
-    ialert_send_message = mocker.patch.object(alert_mock, 'send_message')
     mocker.patch(MockAlert.mock_path, new=alert_mock)
 
-    # ILogger
+    """
+    mock ILogger
+    """
     logger_mock = mocker.Mock(spec=ILogger)
     mocker.patch(MockLogger.mock_path, new=logger_mock)
-
-    # mockのDi設定
-    mocker.patch(TestDbDiModule.mock_path, new=TestDbDiModule)
-    mocker.patch(TestPriceDiModule.mock_path, new=TestPriceDiModule)
-    mocker.patch(TestAlertDiModule.mock_path, new=TestAlertDiModule)
-    mocker.patch(TestLoggerDiModule.mock_path, new=TestLoggerDiModule)
 
     """
     exec
     """
-    main.execute()
+    main_object = get_main_object()
+    main_object.execute()
 
     """
     confirm
     """
-    assert idb_make_alert_message.call_count == 2
-    idb_make_alert_message.assert_has_calls([
+
+    # 価格取得失敗のメッセージ
+    assert main_fail.call_count == 3
+    main_fail.assert_has_calls([
         mocker.call(56789),
         mocker.call(24680),
+        mocker.call(13579)
     ])
-    assert idb_make_fail_message.call_count == 2
-    idb_make_fail_message.assert_has_calls([
-        mocker.call(12345),
-        mocker.call(13579),
+
+    # アラートの送信
+    assert main_alert.call_count == 3
+    main_alert.assert_has_calls([
+        mocker.call([12345]),
+        mocker.call([]),
+        mocker.call([45678, 67890]),
     ])
-    assert ialert_send_message.call_count == 5
-    ialert_send_message.assert_has_calls([
-        mocker.call('fail 12345'),
-        mocker.call('alert 56789'),
-        mocker.call('alert 24680'),
-        mocker.call('fail 13579'),
-    ])
+
+    # 終了メッセージの出力
+    assert main_send_message.call_count == 1
+
+
+def test_send_message_normal(mocker):
+    """
+    send_messageメソッドの正常系テスト
+
+    """
+    """
+    mock IDb
+    """
+    db_mock = mocker.Mock(spec=IDb)
+    mocker.patch(MockDb.mock_path, new=db_mock)
+
+    """
+    mock IPrice
+    """
+    price_mock = mocker.Mock(spec=IPrice)
+    mocker.patch(MockPrice.mock_path, new=price_mock)
+
+    """
+    mock IAlert
+    """
+    alert_mock = mocker.Mock(spec=IAlert)
+    ialert_send_message = mocker.patch.object(
+        alert_mock,
+        'send_message'
+    )
+    mocker.patch(MockAlert.mock_path, new=alert_mock)
+
+    """
+    mock ILogger
+    """
+    logger_mock = mocker.Mock(spec=ILogger)
+    mocker.patch(MockLogger.mock_path, new=logger_mock)
+    ilogger_exception = mocker.patch.object(logger_mock, 'exception')
+
+    """
+    exec
+    """
+    main_object = get_main_object()
+    main_object.send_message('param_message')
+
+    """
+    confirm
+    """
+    assert ialert_send_message.call_count == 1
+    ialert_send_message.assert_has_calls([mocker.call('param_message')])
+    assert ilogger_exception.call_count == 0
 
 
 def test_exception_from_send_message(mocker):
@@ -338,40 +486,40 @@ def test_exception_from_send_message(mocker):
     log出力が行われること
     """
     """
-    mock
+    mock IDb
     """
-    # IDb
     db_mock = mocker.Mock(spec=IDb)
-    mocker.patch.object(db_mock, 'get_descriptions', return_value=[])
     mocker.patch(MockDb.mock_path, new=db_mock)
 
-    # IPrice
+    """
+    mock IPrice
+    """
     price_mock = mocker.Mock(spec=IPrice)
     mocker.patch(MockPrice.mock_path, new=price_mock)
 
-    # IAlert
+    """
+    mock IAlert
+    """
     alert_mock = mocker.Mock(spec=IAlert)
-    mocker.patch.object(
+    ialert_send_message = mocker.patch.object(
         alert_mock,
         'send_message'
-    ).side_effect = AlertException()
+    )
+    ialert_send_message.side_effect = AlertException()
     mocker.patch(MockAlert.mock_path, new=alert_mock)
 
-    # ILogger
+    """
+    mock ILogger
+    """
     logger_mock = mocker.Mock(spec=ILogger)
     mocker.patch(MockLogger.mock_path, new=logger_mock)
     ilogger_exception = mocker.patch.object(logger_mock, 'exception')
 
-    # mockのDi設定
-    mocker.patch(TestDbDiModule.mock_path, new=TestDbDiModule)
-    mocker.patch(TestPriceDiModule.mock_path, new=TestPriceDiModule)
-    mocker.patch(TestAlertDiModule.mock_path, new=TestAlertDiModule)
-    mocker.patch(TestLoggerDiModule.mock_path, new=TestLoggerDiModule)
-
     """
     exec
     """
-    main.execute()
+    main_object = get_main_object()
+    main_object.send_message('param_message')
 
     """
     confirm
@@ -379,25 +527,134 @@ def test_exception_from_send_message(mocker):
     assert ilogger_exception.call_count == 1
 
 
+def test_alert_normal(mocker):
+    """
+    alert対象銘柄が1件以上の場合のメッセージテスト
+
+    """
+    """
+    mock IDb
+    """
+    db_mock = mocker.Mock(spec=IDb)
+    idb_make_alert_message = mocker.patch.object(db_mock, 'make_alert_message')
+    idb_make_alert_message.side_effect = lambda x: 'alert {}'.format(x)
+    mocker.patch(MockDb.mock_path, new=db_mock)
+
+    """
+    mock IPrice
+    """
+    price_mock = mocker.Mock(spec=IPrice)
+    mocker.patch(MockPrice.mock_path, new=price_mock)
+
+    """
+    mock IAlert
+    """
+    alert_mock = mocker.Mock(spec=IAlert)
+    ialert_send_message = mocker.patch.object(
+        alert_mock,
+        'send_message'
+    )
+    mocker.patch(MockAlert.mock_path, new=alert_mock)
+
+    """
+    mock ILogger
+    """
+    logger_mock = mocker.Mock(spec=ILogger)
+    mocker.patch(MockLogger.mock_path, new=logger_mock)
+    ilogger_exception = mocker.patch.object(logger_mock, 'exception')
+
+    """
+    exec
+    """
+    descriptions = [5489, 124785, 1111]
+    main_object = get_main_object()
+    main_object.alert(descriptions)
+
+    """
+    confirm
+    """
+    assert ialert_send_message.call_count == 1
+    expected_message = \
+        'alert 5489\n' \
+        'alert 124785\n' \
+        'alert 1111'
+    ialert_send_message.assert_has_calls([mocker.call(expected_message)])
+    assert ilogger_exception.call_count == 0
+
+
+def test_alert_empty(mocker):
+    """
+    alert対象銘柄が0件の場合のメッセージテスト
+
+    """
+    """
+    mock IDb
+    """
+    db_mock = mocker.Mock(spec=IDb)
+    mocker.patch(MockDb.mock_path, new=db_mock)
+
+    """
+    mock IPrice
+    """
+    price_mock = mocker.Mock(spec=IPrice)
+    mocker.patch(MockPrice.mock_path, new=price_mock)
+
+    """
+    mock IAlert
+    """
+    alert_mock = mocker.Mock(spec=IAlert)
+    ialert_send_message = mocker.patch.object(
+        alert_mock,
+        'send_message'
+    )
+    mocker.patch(MockAlert.mock_path, new=alert_mock)
+
+    """
+    mock ILogger
+    """
+    logger_mock = mocker.Mock(spec=ILogger)
+    mocker.patch(MockLogger.mock_path, new=logger_mock)
+    ilogger_exception = mocker.patch.object(logger_mock, 'exception')
+
+    """
+    exec
+    """
+    descriptions = []
+    main_object = get_main_object()
+    main_object.alert(descriptions)
+
+    """
+    confirm
+    """
+    assert ialert_send_message.call_count == 1
+    expected_message = main.Main.no_alert_description_message
+    ialert_send_message.assert_has_calls([mocker.call(expected_message)])
+    assert ilogger_exception.call_count == 0
+
+
 def test_exception_from_alert(mocker):
     """
-    alert内で例外が発生した場合、
+    alert内で通知の際に例外が発生した場合、
     log出力が行われること
     """
     """
     mock
     """
-    # IDb
+    """
+    mock IDb
+    """
     db_mock = mocker.Mock(spec=IDb)
-    mocker.patch.object(db_mock, 'get_descriptions', return_value=[1])
-    mocker.patch.object(db_mock, 'get_judge_func', return_value=lambda x: True)
     mocker.patch(MockDb.mock_path, new=db_mock)
 
-    # IPrice
+    """
+    mock IPrice
+    """
     price_mock = mocker.Mock(spec=IPrice)
     mocker.patch(MockPrice.mock_path, new=price_mock)
 
-    # IAlert
+    """
+    mock IAlert
+    """
     alert_mock = mocker.Mock(spec=IAlert)
     mocker.patch.object(
         alert_mock,
@@ -405,27 +662,74 @@ def test_exception_from_alert(mocker):
     ).side_effect = AlertException()
     mocker.patch(MockAlert.mock_path, new=alert_mock)
 
-    # ILogger
+    """
+    mock ILogger
+    """
     logger_mock = mocker.Mock(spec=ILogger)
     mocker.patch(MockLogger.mock_path, new=logger_mock)
     ilogger_exception = mocker.patch.object(logger_mock, 'exception')
 
-    # mockのDi設定
-    mocker.patch(TestDbDiModule.mock_path, new=TestDbDiModule)
-    mocker.patch(TestPriceDiModule.mock_path, new=TestPriceDiModule)
-    mocker.patch(TestAlertDiModule.mock_path, new=TestAlertDiModule)
-    mocker.patch(TestLoggerDiModule.mock_path, new=TestLoggerDiModule)
-
     """
     exec
     """
-    mocker.patch('main.Main.send_message')
-    main.execute()
+    main_object = get_main_object()
+    main_object.alert([])
 
     """
     confirm
     """
     assert ilogger_exception.call_count == 1
+
+
+def test_fail_normal(mocker):
+    """
+    failメソッドの正常系テスト
+    """
+    """
+    mock IDb
+    """
+    db_mock = mocker.Mock(spec=IDb)
+    idb_make_fail_message = mocker.patch.object(db_mock, 'make_fail_message')
+    idb_make_fail_message.side_effect = lambda x: 'fail {}'.format(x)
+    mocker.patch(MockDb.mock_path, new=db_mock)
+
+    """
+    mock IPrice
+    """
+    price_mock = mocker.Mock(spec=IPrice)
+    mocker.patch(MockPrice.mock_path, new=price_mock)
+
+    """
+    mock IAlert
+    """
+    alert_mock = mocker.Mock(spec=IAlert)
+    ialert_send_message = mocker.patch.object(
+        alert_mock,
+        'send_message'
+    )
+    mocker.patch(MockAlert.mock_path, new=alert_mock)
+
+    """
+    mock ILogger
+    """
+    logger_mock = mocker.Mock(spec=ILogger)
+    mocker.patch(MockLogger.mock_path, new=logger_mock)
+    ilogger_exception = mocker.patch.object(logger_mock, 'exception')
+
+    """
+    exec
+    """
+    description = 95247
+    main_object = get_main_object()
+    main_object.fail(description)
+
+    """
+    confirm
+    """
+    assert ialert_send_message.call_count == 1
+    expected_message = 'fail 95247'
+    ialert_send_message.assert_has_calls([mocker.call(expected_message)])
+    assert ilogger_exception.call_count == 0
 
 
 def test_exception_from_fail(mocker):
@@ -436,17 +740,21 @@ def test_exception_from_fail(mocker):
     """
     mock
     """
-    # IDb
+    """
+    mock IDb
+    """
     db_mock = mocker.Mock(spec=IDb)
-    mocker.patch.object(db_mock, 'get_descriptions', return_value=[1])
     mocker.patch(MockDb.mock_path, new=db_mock)
 
-    # IPrice
+    """
+    mock IPrice
+    """
     price_mock = mocker.Mock(spec=IPrice)
-    mocker.patch.object(price_mock, 'get_data').side_effect = PriceException()
     mocker.patch(MockPrice.mock_path, new=price_mock)
 
-    # IAlert
+    """
+    mock IAlert
+    """
     alert_mock = mocker.Mock(spec=IAlert)
     mocker.patch.object(
         alert_mock,
@@ -454,22 +762,19 @@ def test_exception_from_fail(mocker):
     ).side_effect = AlertException()
     mocker.patch(MockAlert.mock_path, new=alert_mock)
 
-    # ILogger
+    """
+    mock ILogger
+    """
     logger_mock = mocker.Mock(spec=ILogger)
     mocker.patch(MockLogger.mock_path, new=logger_mock)
     ilogger_exception = mocker.patch.object(logger_mock, 'exception')
 
-    # mockのDi設定
-    mocker.patch(TestDbDiModule.mock_path, new=TestDbDiModule)
-    mocker.patch(TestPriceDiModule.mock_path, new=TestPriceDiModule)
-    mocker.patch(TestAlertDiModule.mock_path, new=TestAlertDiModule)
-    mocker.patch(TestLoggerDiModule.mock_path, new=TestLoggerDiModule)
-
     """
     exec
     """
-    mocker.patch('main.Main.send_message')
-    main.execute()
+    description = 95247
+    main_object = get_main_object()
+    main_object.fail(description)
 
     """
     confirm
