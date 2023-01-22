@@ -90,4 +90,4 @@ class CsvAsDb(IDb):
             # 価格に数値以外が設定されている場合
             raise DbException(ex_message_invalid)
 
-        return Decimal(price), trigger
+        return Decimal(float(price)), trigger
