@@ -20,6 +20,25 @@ class CsvAsDb(IDb):
         # 重複をとる
         return list(dict.fromkeys(description_list))
 
+    def get_description_groups(self) -> List[List[int]]:
+        over_group = []
+        under_group = []
+
+        for description in self.get_descriptions():
+            try:
+                price, trigger = self.__get_price_trigger_from_db(description)
+                print(description, trigger)
+            except DbException:
+                # TODO: エラー制御が良くない ファイル不正の場合の挙動がアプリケーションを通して一貫していない
+                # MEMO: そもそもファイル不正のチェックは__init__でやるべきかも
+                continue
+
+            if trigger == 'over':
+                over_group.append(description)
+            else:
+                under_group.append(description)
+        return [over_group, under_group]
+
     def get_judge_func(self, description: int) -> Callable[[int], bool]:
         price, trigger = self.__get_price_trigger_from_db(description)
 
